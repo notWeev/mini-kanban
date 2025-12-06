@@ -15,7 +15,7 @@ jobs:
     strategy:
       # Uruchamia zadania równolegle dla różnych wersji Node.js
       matrix:
-        node-version: [18.x, 20.x]
+        node-version: [20.x]
 
     steps:
       # 1. Pobiera kod z repozytorium
