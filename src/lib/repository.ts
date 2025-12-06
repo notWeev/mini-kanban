@@ -4,7 +4,7 @@ import type {
   Session,
   User as SupabaseUser,
 } from "@supabase/supabase-js";
-import type { Card, User } from "../types/index";
+import type { Card, List, User } from "../types/index";
 
 /**
  * Definiuje kontrakt dla operacji na danych, abstrahując od konkretnej implementacji (np. Supabase, Firebase).
@@ -25,6 +25,9 @@ export interface IDataRepository {
 
   signOut(): Promise<{ error: Error | null }>;
   getUser(): Promise<{ user: User | null; error: Error | null }>;
+
+  // --- Board ---
+  getBoard(): Promise<{ data: List[] | null; error: Error | null }>;
 
   // --- Cards ---
   getCards(): Promise<{ data: Card[] | null; error: Error | null }>;

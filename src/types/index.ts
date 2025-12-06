@@ -32,6 +32,7 @@ export interface List {
   id: string;
   name: string;
   position: number;
+  board_id: string;
   cards: Card[];
 }
 

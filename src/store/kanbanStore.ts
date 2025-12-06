@@ -1,38 +1,18 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { Card, List } from "../types";
+import { SupabaseRepository } from "../lib/SupabaseRepository.ts";
 
-// Przykładowe dane początkowe dla MVP
-const initialLists: List[] = [
-  {
-    id: "list-1",
-    name: "Do zrobienia",
-    position: 0,
-    cards: [
-      {
-        id: "card-1",
-        title: "Skonfigurować projekt",
-        description: "Zainicjować repozytorium i podstawowe zależności.",
-        priority: "high",
-        list_id: "list-1",
-        user_id: "user-1",
-        position: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-    ],
-  },
-  { id: "list-2", name: "W toku", position: 1, cards: [] },
-  { id: "list-3", name: "Zrobione", position: 2, cards: [] },
-];
+const repository = new SupabaseRepository();
 
 interface KanbanState {
   lists: List[];
+  isLoading: boolean;
 }
 
 interface KanbanActions {
-  // Używane do inicjalizacji stanu danymi z backendu
-  setLists: (lists: List[]) => void;
+  // Inicjalizacja z bazy danych
+  fetchBoard: () => Promise<void>;
   // Operacje CRUD na kartach
   addCard: (
     listId: string,
@@ -40,69 +20,111 @@ interface KanbanActions {
       Card,
       "id" | "list_id" | "user_id" | "created_at" | "updated_at" | "position"
     >
-  ) => void;
-  updateCard: (cardId: string, updates: Partial<Omit<Card, "id">>) => void;
-  deleteCard: (cardId: string) => void;
+  ) => Promise<void>;
+  updateCard: (
+    cardId: string,
+    updates: Partial<Omit<Card, "id">>
+  ) => Promise<void>;
+  deleteCard: (cardId: string, listId: string) => Promise<void>;
   // Operacja Drag & Drop
   moveCard: (
     cardId: string,
     sourceListId: string,
     destListId: string,
     newPosition: number
-  ) => void;
+  ) => Promise<void>;
+  // Operacje CRUD na listach
+  addList: (name: string) => Promise<void>;
+  updateList: (listId: string, name: string) => Promise<void>;
+  deleteList: (listId: string) => Promise<void>;
 }
 
 export const useKanbanStore = create<KanbanState & KanbanActions>()(
   immer((set) => ({
-    lists: initialLists,
+    lists: [],
+    isLoading: true,
 
-    setLists: (lists) => set({ lists }),
-
-    addCard: (listId, cardData) => {
-      set((state) => {
-        const list = state.lists.find((l) => l.id === listId);
-        if (list) {
-          const newCard: Card = {
-            ...cardData,
-            id: `card-${Date.now()}`, // Tymczasowe ID, backend nada właściwe
-            list_id: listId,
-            user_id: "user-1", // Placeholder
-            position: list.cards.length,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          list.cards.push(newCard);
+    fetchBoard: async () => {
+      set({ isLoading: true });
+      const { data, error } = await repository.getBoard();
+      if (data) {
+        // Jeśli użytkownik ma już listy, załaduj je
+        if (data.length > 0) {
+          set({ lists: data, isLoading: false });
+        } else {
+          // Jeśli to nowy użytkownik (brak list), stwórz domyślny zestaw
+          const { data: defaultLists } =
+            await repository.createDefaultListsForNewUser();
+          set({ lists: defaultLists || [], isLoading: false });
         }
-      });
+      } else {
+        console.error("Failed to fetch board:", error);
+        set({ isLoading: false });
+      }
     },
 
-    updateCard: (cardId, updates) => {
+    addCard: async (listId, cardData) => {
+      const list = useKanbanStore.getState().lists.find((l) => l.id === listId);
+      if (!list) return;
+
+      const position = list.cards.length;
+      const { data: newCard, error } = await repository.createCard({
+        ...cardData,
+        list_id: listId,
+        position,
+      });
+
+      if (newCard) {
+        set((state) => {
+          const targetList = state.lists.find((l) => l.id === listId);
+          targetList?.cards.push(newCard);
+        });
+      } else {
+        console.error("Failed to create card:", error);
+      }
+    },
+
+    updateCard: async (cardId, updates) => {
+      // Optymistyczna aktualizacja UI
       set((state) => {
         for (const list of state.lists) {
           const card = list.cards.find((c) => c.id === cardId);
           if (card) {
-            Object.assign(card, updates, {
-              updated_at: new Date().toISOString(),
-            });
+            Object.assign(card, updates);
             return;
           }
         }
       });
+
+      // Wysłanie zmiany do bazy
+      const { error } = await repository.updateCard(cardId, updates);
+      if (error) {
+        console.error("Failed to update card:", error);
+        // TODO: Wycofaj zmianę w UI w razie błędu
+      }
     },
 
-    deleteCard: (cardId) => {
+    deleteCard: async (cardId, listId) => {
+      // Optymistyczna aktualizacja UI
       set((state) => {
-        for (const list of state.lists) {
-          const cardIndex = list.cards.findIndex((c) => c.id === cardId);
-          if (cardIndex !== -1) {
-            list.cards.splice(cardIndex, 1);
-            return;
-          }
+        const list = state.lists.find((l) => l.id === listId);
+        if (list) {
+          list.cards = list.cards.filter((c) => c.id !== cardId);
         }
       });
+
+      const { error } = await repository.deleteCard(cardId);
+      if (error) {
+        console.error("Failed to delete card:", error);
+        // TODO: Wycofaj zmianę w UI w razie błędu
+      }
     },
 
-    moveCard: (cardId, sourceListId, destListId, newPosition) => {
+    moveCard: async (cardId, sourceListId, destListId, newPosition) => {
+      // 1. Zapisz migawkę stanu na wypadek błędu
+      const previousLists = useKanbanStore.getState().lists;
+
+      // Optymistyczna aktualizacja UI
       set((state) => {
         const sourceList = state.lists.find((l) => l.id === sourceListId);
         if (!sourceList) return;
@@ -110,26 +132,59 @@ export const useKanbanStore = create<KanbanState & KanbanActions>()(
         const cardIndex = sourceList.cards.findIndex((c) => c.id === cardId);
         if (cardIndex === -1) return;
 
-        // 1. Usuń kartę z listy źródłowej
         const [movedCard] = sourceList.cards.splice(cardIndex, 1);
-        movedCard.list_id = destListId; // Zaktualizuj list_id
+        movedCard.list_id = destListId;
 
-        // 2. Dodaj kartę do listy docelowej
         const destList = state.lists.find((l) => l.id === destListId);
         if (destList) {
           destList.cards.splice(newPosition, 0, movedCard);
         }
       });
+
+      // Aktualizacja pozycji w bazie danych
+      const { error } = await repository.updateCard(cardId, {
+        list_id: destListId,
+        position: newPosition,
+      });
+      if (error) {
+        console.error("Failed to move card:", error);
+        // 3. Wycofaj zmianę w UI w razie błędu (Rollback)
+        set({ lists: previousLists });
+      }
+    },
+
+    // Metody dla list (na razie bez implementacji w repozytorium)
+    addList: async (name: string) => {
+      const state = useKanbanStore.getState();
+      // Zakładamy, że wszystkie listy należą do tej samej tablicy
+      const boardId = state.lists[0]?.board_id;
+      if (!boardId) {
+        console.error("Cannot add list: board ID is unknown.");
+        return;
+      }
+
+      const position = state.lists.length;
+      const { data: newList, error } = await repository.createList(
+        boardId,
+        name,
+        position
+      );
+
+      if (newList) {
+        set({ lists: [...state.lists, newList] });
+      } else {
+        console.error("Failed to add list:", error);
+      }
+    },
+    updateList: async (listId, name) => {
+      console.log("updateList not implemented with backend yet", listId, name);
+    },
+    deleteList: async (listId) => {
+      console.log("deleteList not implemented with backend yet", listId);
     },
   }))
 );
 
 // Przykładowe selektory
 export const selectLists = (state: KanbanState) => state.lists;
-export const selectCardById = (cardId: string) => (state: KanbanState) => {
-  for (const list of state.lists) {
-    const card = list.cards.find((c) => c.id === cardId);
-    if (card) return card;
-  }
-  return undefined;
-};
+export const selectIsLoading = (state: KanbanState) => state.isLoading;

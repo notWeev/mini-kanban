@@ -1,0 +1,59 @@
+name: CI Pipeline
+
+# Uruchamia workflow przy pushu do gałęzi `main` oraz przy każdym pull requeście
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-test:
+    # Uruchamia zadanie na najnowszej wersji Ubuntu
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Uruchamia zadania równolegle dla różnych wersji Node.js
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      # 1. Pobiera kod z repozytorium
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Konfiguruje wskazaną wersję Node.js i włącza cache dla npm
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      # 3. Instaluje zależności za pomocą `npm ci` (szybsze i bardziej niezawodne w CI)
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. Uruchamia linter, aby sprawdzić styl i jakość kodu
+      - name: Run linter
+        run: npm run lint
+
+      # 5. Uruchamia testy. Przekazuje sekrety jako zmienne środowiskowe.
+      - name: Run tests
+        run: npm test
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      # 6. Buduje aplikację do produkcji
+      - name: Build project
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      # 7. Zapisuje zbudowaną aplikację (folder `dist`) jako artefakt
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-node-${{ matrix.node-version }}
+          path: dist

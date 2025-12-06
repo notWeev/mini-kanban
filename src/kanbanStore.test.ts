@@ -1,77 +1,202 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useKanbanStore } from "./store/kanbanStore";
+import { SupabaseRepository } from "./lib/SupabaseRepository";
+import type { Card } from "./types";
 
-// Pobranie początkowego stanu i zresetowanie go przed każdym testem
+// Mockujemy całą klasę repozytorium. Vitest zastąpi wszystkie jej metody pustymi funkcjami.
+vi.mock("./lib/SupabaseRepository");
+
 const initialState = useKanbanStore.getState();
 beforeEach(() => {
+  // Resetujemy stan store'a przed każdym testem
   useKanbanStore.setState(initialState, true);
+  // Czyścimy wszystkie mocki, aby testy były od siebie odizolowane
+  vi.clearAllMocks();
 });
 
 describe("Kanban Store", () => {
-  it("should add a new card to the correct list", () => {
-    const listId = "list-1";
-    const initialCardCount = useKanbanStore
-      .getState()
-      .lists.find((l) => l.id === listId)!.cards.length;
-
-    // Pobranie akcji ze store'a
-    const { addCard } = useKanbanStore.getState();
-    addCard(listId, {
-      title: "Nowe zadanie",
-      description: "Opis",
-      priority: "medium",
+  it("should fetch the board and set lists", async () => {
+    const mockLists = [
+      { id: "list-1", name: "Test List", position: 0, cards: [] },
+    ];
+    // Konfigurujemy mocka, aby `getBoard` zwracał nasze dane testowe
+    vi.mocked(SupabaseRepository.prototype.getBoard).mockResolvedValue({
+      data: mockLists,
+      error: null,
     });
 
-    const list = useKanbanStore.getState().lists.find((l) => l.id === listId);
-    expect(list!.cards.length).toBe(initialCardCount + 1);
-    expect(list!.cards[list!.cards.length - 1].title).toBe("Nowe zadanie");
+    const { fetchBoard } = useKanbanStore.getState();
+    await fetchBoard();
+
+    const state = useKanbanStore.getState();
+    expect(state.isLoading).toBe(false);
+    expect(state.lists).toEqual(mockLists);
   });
 
-  it("should update an existing card", () => {
+  it("should add a new card by calling the repository", async () => {
+    const listId = "list-1";
+    // Ustawiamy początkowy stan dla tego testu
+    useKanbanStore.setState({
+      lists: [{ id: listId, name: "Test", position: 0, cards: [] }],
+      isLoading: false,
+    });
+
+    const newCardData = {
+      title: "Nowe zadanie",
+      description: "Opis",
+      priority: "medium" as const,
+    };
+    const returnedCard: Card = {
+      ...newCardData,
+      id: "card-new",
+      list_id: listId,
+      position: 0,
+      user_id: "user-1",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Konfigurujemy mocka, aby `createCard` zwracał nową kartę
+    vi.mocked(SupabaseRepository.prototype.createCard).mockResolvedValue({
+      data: returnedCard,
+      error: null,
+    });
+
+    const { addCard } = useKanbanStore.getState();
+    await addCard(listId, newCardData);
+
+    // Sprawdzamy, czy metoda repozytorium została wywołana z poprawnymi danymi
+    expect(SupabaseRepository.prototype.createCard).toHaveBeenCalledWith({
+      ...newCardData,
+      list_id: listId,
+      position: 0,
+    });
+
+    // Sprawdzamy, czy stan store'a został poprawnie zaktualizowany
+    const state = useKanbanStore.getState();
+    expect(state.lists[0].cards).toHaveLength(1);
+    expect(state.lists[0].cards[0]).toEqual(returnedCard);
+  });
+
+  it("should optimistically update a card and call the repository", async () => {
     const cardId = "card-1";
+    const listId = "list-1";
     const newTitle = "Zaktualizowany tytuł";
 
+    // Ustawiamy stan początkowy z jedną kartą
+    useKanbanStore.setState({
+      lists: [
+        {
+          id: listId,
+          name: "Test",
+          position: 0,
+          cards: [{ id: cardId, title: "Stary tytuł" } as Card],
+        },
+      ],
+      isLoading: false,
+    });
+
+    // Konfigurujemy mocka, aby `updateCard` zwracał poprawną odpowiedź
+    vi.mocked(SupabaseRepository.prototype.updateCard).mockResolvedValue({
+      data: { id: cardId, title: newTitle } as Card,
+      error: null,
+    });
+
     const { updateCard } = useKanbanStore.getState();
-    updateCard(cardId, { title: newTitle });
+    await updateCard(cardId, { title: newTitle });
 
-    const state = useKanbanStore.getState();
-    const updatedCard = state.lists
-      .flatMap((l) => l.cards)
-      .find((c) => c.id === cardId);
-
-    expect(updatedCard).toBeDefined();
-    expect(updatedCard!.title).toBe(newTitle);
+    // Sprawdzamy, czy UI zostało zaktualizowane optymistycznie (natychmiast)
+    expect(useKanbanStore.getState().lists[0].cards[0].title).toBe(newTitle);
+    // Sprawdzamy, czy metoda repozytorium została wywołana w tle
+    expect(SupabaseRepository.prototype.updateCard).toHaveBeenCalledWith(
+      cardId,
+      {
+        title: newTitle,
+      }
+    );
   });
 
-  it("should delete a card", () => {
+  it("should optimistically delete a card and call the repository", async () => {
     const cardId = "card-1";
+    const listId = "list-1";
+
+    // Ustawiamy stan początkowy z jedną kartą
+    useKanbanStore.setState({
+      lists: [
+        {
+          id: listId,
+          name: "Test",
+          position: 0,
+          cards: [{ id: cardId, title: "Do usunięcia" } as Card],
+        },
+      ],
+      isLoading: false,
+    });
+
+    // Konfigurujemy mocka, aby `deleteCard` nic nie zwracał (sukces)
+    vi.mocked(SupabaseRepository.prototype.deleteCard).mockResolvedValue({
+      error: null,
+    });
 
     const { deleteCard } = useKanbanStore.getState();
-    deleteCard(cardId);
+    await deleteCard(cardId, listId);
 
-    const state = useKanbanStore.getState();
-    const deletedCard = state.lists
-      .flatMap((l) => l.cards)
-      .find((c) => c.id === cardId);
+    // Sprawdzamy, czy UI zostało zaktualizowane optymistycznie
+    expect(useKanbanStore.getState().lists[0].cards).toHaveLength(0);
 
-    expect(deletedCard).toBeUndefined();
+    // Sprawdzamy, czy metoda repozytorium została wywołana
+    expect(SupabaseRepository.prototype.deleteCard).toHaveBeenCalledWith(
+      cardId
+    );
   });
 
-  it("should move a card from one list to another", () => {
+  it("should optimistically move a card and call the repository", async () => {
     const cardId = "card-1";
     const sourceListId = "list-1";
     const destListId = "list-2";
 
-    const { moveCard } = useKanbanStore.getState();
-    moveCard(cardId, sourceListId, destListId, 0);
+    // Ustawiamy stan początkowy z dwiema listami i jedną kartą
+    useKanbanStore.setState({
+      lists: [
+        {
+          id: sourceListId,
+          name: "Source",
+          position: 0,
+          cards: [
+            {
+              id: cardId,
+              title: "Przenośna karta",
+              list_id: sourceListId,
+            } as Card,
+          ],
+        },
+        { id: destListId, name: "Destination", position: 1, cards: [] },
+      ],
+      isLoading: false,
+    });
 
+    vi.mocked(SupabaseRepository.prototype.updateCard).mockResolvedValue({
+      data: {} as Card,
+      error: null,
+    });
+
+    const { moveCard } = useKanbanStore.getState();
+    await moveCard(cardId, sourceListId, destListId, 0);
+
+    // Sprawdzamy, czy UI zostało zaktualizowane optymistycznie
     const state = useKanbanStore.getState();
-    expect(state.lists.find((l) => l.id === sourceListId)!.cards).toHaveLength(
+    expect(state.lists.find((l) => l.id === sourceListId)?.cards).toHaveLength(
       0
     );
-    expect(state.lists.find((l) => l.id === destListId)!.cards).toHaveLength(1);
-    expect(state.lists.find((l) => l.id === destListId)!.cards[0].id).toBe(
+    expect(state.lists.find((l) => l.id === destListId)?.cards).toHaveLength(1);
+    expect(state.lists.find((l) => l.id === destListId)?.cards[0].id).toBe(
       cardId
+    );
+
+    // Sprawdzamy, czy metoda repozytorium została wywołana z poprawnymi danymi
+    expect(SupabaseRepository.prototype.updateCard).toHaveBeenCalledWith(
+      cardId,
+      { list_id: destListId, position: 0 }
     );
   });
 });

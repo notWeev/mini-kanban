@@ -1,8 +1,8 @@
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { BoardPage } from "./pages/BoardPage";
-import { BoardsPage } from "./pages/BoardsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { AuthProvider } from "./features/auth/AuthContext";
 
 const router = createBrowserRouter([
   {
@@ -11,10 +11,6 @@ const router = createBrowserRouter([
     children: [
       {
         index: true, // Domyślna podstrona dla "/"
-        element: <BoardsPage />,
-      },
-      {
-        path: "board/:id",
         element: <BoardPage />,
       },
     ],
@@ -25,6 +21,10 @@ const router = createBrowserRouter([
   },
 ]);
 
-const App = () => <RouterProvider router={router} />;
+const App = () => (
+  <AuthProvider>
+    <RouterProvider router={router} />
+  </AuthProvider>
+);
 
 export default App;
