@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useKanbanStore } from "./store/kanbanStore";
 import { SupabaseRepository } from "./lib/SupabaseRepository";
-import type { Card } from "./types";
+import type { Card, List } from "./types";
 
 // Mockujemy całą klasę repozytorium. Vitest zastąpi wszystkie jej metody pustymi funkcjami.
 vi.mock("./lib/SupabaseRepository");
@@ -16,8 +16,14 @@ beforeEach(() => {
 
 describe("Kanban Store", () => {
   it("should fetch the board and set lists", async () => {
-    const mockLists = [
-      { id: "list-1", name: "Test List", position: 0, cards: [] },
+    const mockLists: List[] = [
+      {
+        id: "list-1",
+        name: "Test List",
+        position: 0,
+        board_id: "board-1",
+        cards: [],
+      },
     ];
     // Konfigurujemy mocka, aby `getBoard` zwracał nasze dane testowe
     vi.mocked(SupabaseRepository.prototype.getBoard).mockResolvedValue({
@@ -37,7 +43,15 @@ describe("Kanban Store", () => {
     const listId = "list-1";
     // Ustawiamy początkowy stan dla tego testu
     useKanbanStore.setState({
-      lists: [{ id: listId, name: "Test", position: 0, cards: [] }],
+      lists: [
+        {
+          id: listId,
+          name: "Test",
+          position: 0,
+          board_id: "board-1",
+          cards: [],
+        },
+      ],
       isLoading: false,
     });
 
@@ -90,7 +104,13 @@ describe("Kanban Store", () => {
           id: listId,
           name: "Test",
           position: 0,
-          cards: [{ id: cardId, title: "Stary tytuł" } as Card],
+          board_id: "board-1",
+          cards: [
+            {
+              id: cardId,
+              title: "Stary tytuł",
+            } as Card,
+          ],
         },
       ],
       isLoading: false,
@@ -127,7 +147,13 @@ describe("Kanban Store", () => {
           id: listId,
           name: "Test",
           position: 0,
-          cards: [{ id: cardId, title: "Do usunięcia" } as Card],
+          board_id: "board-1",
+          cards: [
+            {
+              id: cardId,
+              title: "Do usunięcia",
+            } as Card,
+          ],
         },
       ],
       isLoading: false,
@@ -162,15 +188,28 @@ describe("Kanban Store", () => {
           id: sourceListId,
           name: "Source",
           position: 0,
+          board_id: "board-1",
           cards: [
             {
               id: cardId,
               title: "Przenośna karta",
               list_id: sourceListId,
+              description: null,
+              priority: "medium",
+              user_id: "user-1",
+              position: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             } as Card,
           ],
         },
-        { id: destListId, name: "Destination", position: 1, cards: [] },
+        {
+          id: destListId,
+          name: "Destination",
+          position: 1,
+          board_id: "board-1",
+          cards: [],
+        },
       ],
       isLoading: false,
     });
